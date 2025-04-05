@@ -1,6 +1,7 @@
 ﻿using AuthenNet8.DTO.Auth;
 using AuthenNet8.DTO.SYS;
 using AuthenNet8.Entities;
+using Azure.Core;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -44,7 +45,10 @@ namespace AuthenNet8.Services.Auth
                 {
                     Email = request.Email,
                     Password = request.Password,
+                    FirstName = request.FirstName,
                     LastName = request.LastName,
+                    CreatedDate = DateTime.UtcNow,
+                    CreatedBy = request.Email,
                     PasswordHash = Convert.ToBase64String(passwordHash),
                     PasswordSalt = Convert.ToBase64String(passwordSalt)
                 };
@@ -96,10 +100,8 @@ namespace AuthenNet8.Services.Auth
             var refreshToken = GenerateRefreshToken();
             SetRefreshToken(refreshToken, user.ID);
 
-            user.RefreshToken = refreshToken.Token;
-            user.TokenCreated = refreshToken.Created;
-            user.TokenExpires = refreshToken.Expires;
-            await _dbContext.SaveChangesAsync();
+            // Cập nhật refresh token theo user
+            await UpdateUserRefreshToken(user, refreshToken);
             #endregion
 
             return token;
@@ -118,37 +120,27 @@ namespace AuthenNet8.Services.Auth
         #region Refresh token
         public async Task<string> Auth_RefreshToken()
         {
-            string refreshToken = string.Empty;
-            var userID = -1;
-            try
-            {
-                refreshToken = _httpContextAccessor.HttpContext!.Request.Cookies["refreshToken"] ?? string.Empty;
-                // Có thể lưu userID này ở local storage để tránh bị js đánh cắp token
-                userID = Convert.ToInt32(_httpContextAccessor.HttpContext!.Request.Cookies["userId"]);
-            }
-            catch
-            {
-                throw new Exception("No Refresh Token found.");
-            }
-
-            if (string.IsNullOrEmpty(refreshToken) || userID < 0)
-                throw new Exception("No Refresh Token found.");
+            // Cookie refresh token
+            var cookie = GetRefreshToken();
 
             // Lấy user từ HpptOnly Cookie userID
-            var user = await _dbContext.SYS_User.FirstOrDefaultAsync(c => c.ID == userID);
+            var user = await _dbContext.SYS_User.FirstOrDefaultAsync(c => c.ID == cookie.UserID);
             if (user == null)
                 throw new Exception("Invalid user.");
+            var userRefreshToken = await _dbContext.SYS_UserRefreshToken
+                .FirstOrDefaultAsync(c => c.UserID == user.ID && c.Token == cookie.RefeshToken);
+            if (userRefreshToken == null)
+                throw new Exception("Invalid Refresh Token.");
 
-            if (user.TokenExpires < DateTime.UtcNow)
+            if (userRefreshToken.TokenExpires < DateTime.UtcNow)
                 throw new Exception("Refresh Token expired.");
 
             string newToken = CreateToken(user);
             var newRefreshToken = GenerateRefreshToken();
             SetRefreshToken(newRefreshToken, user.ID);
 
-            user.RefreshToken = newRefreshToken.Token;
-            user.TokenCreated = newRefreshToken.Created;
-            user.TokenExpires = newRefreshToken.Expires;
+            userRefreshToken.Token = newRefreshToken.Token;
+            userRefreshToken.TokenExpires = newRefreshToken.Expires;
             await _dbContext.SaveChangesAsync();
 
             return newToken;
@@ -158,20 +150,18 @@ namespace AuthenNet8.Services.Auth
         #region Đăng xuất
         public async Task Auth_Logout()
         {
-            // Lấy refresh token từ cookie
-            var refreshToken = _httpContextAccessor.HttpContext!.Request.Cookies["refreshToken"];
-            if (string.IsNullOrEmpty(refreshToken))
+            // Cookie refresh token
+            var cookie = GetRefreshToken();
+
+            if (string.IsNullOrEmpty(cookie.RefeshToken))
                 throw new Exception("No Refresh Token found.");
 
-            // Tìm user có refresh token này
-            var user = await _dbContext.SYS_User.FirstOrDefaultAsync(u => u.RefreshToken == refreshToken);
-            if (user == null)
-                throw new Exception("Invalid Refresh Token.");
-
-            // Xóa refresh token trong database
-            user.RefreshToken = null;
-            user.TokenCreated = null;
-            user.TokenExpires = null;
+            var userRefreshTokens = await _dbContext.SYS_UserRefreshToken.Where(c => c.UserID == cookie.UserID).ToListAsync();
+            foreach (var userRefreshToken in userRefreshTokens)
+            {
+                userRefreshToken.Token = string.Empty;
+                userRefreshToken.TokenExpires = null;
+            }
             await _dbContext.SaveChangesAsync();
 
             // Xóa cookie refresh token
@@ -221,20 +211,83 @@ namespace AuthenNet8.Services.Auth
             return refreshToken;
         }
 
-        private void SetRefreshToken(RefreshToken newRefreshToken, int userID)
+        private void SetRefreshToken(RefreshToken refreshToken, int userID)
         {
             var cookieOptions = new CookieOptions
             {
                 HttpOnly = true,
-                Expires = newRefreshToken.Expires
+                Expires = refreshToken.Expires
             };
-            _httpContextAccessor.HttpContext!.Response.Cookies.Append("refreshToken", newRefreshToken.Token, cookieOptions);
+            _httpContextAccessor.HttpContext!.Response.Cookies.Append("refreshToken", refreshToken.Token, cookieOptions);
             _httpContextAccessor.HttpContext!.Response.Cookies.Append("userID", userID.ToString(), new CookieOptions
             {
                 HttpOnly = true,
                 Secure = true,
-                Expires = newRefreshToken.Expires
+                Expires = refreshToken.Expires
             });
+        }
+
+        private RefreshToken GetRefreshToken()
+        {
+            string refreshToken = string.Empty;
+            var userID = -1;
+            try
+            {
+                refreshToken = _httpContextAccessor.HttpContext!.Request.Cookies["refreshToken"] ?? string.Empty;
+                // Có thể lưu userID này ở local storage để tránh bị js đánh cắp token
+                userID = Convert.ToInt32(_httpContextAccessor.HttpContext!.Request.Cookies["userId"]);
+            }
+            catch
+            {
+                throw new Exception("No Refresh Token found.");
+            }
+
+            return new RefreshToken
+            {
+                RefeshToken = refreshToken,
+                UserID = userID,
+            };
+        }
+
+        private async Task UpdateUserRefreshToken(SYS_User user, RefreshToken refreshToken)
+        {
+            // Lấy thông tin trình duyệt
+            var deviceInfo = _httpContextAccessor.HttpContext!.Request.Headers["User-Agent"].ToString();
+
+            // Xóa các refresh token khác của user
+            var userRefreshTokens = await _dbContext.SYS_UserRefreshToken.Where(c => c.UserID == user.ID).ToListAsync();
+
+            // refesh token của user trên thiết bị hiện tại
+            var currentToken = userRefreshTokens.FirstOrDefault(c => c.DeviceInfo == deviceInfo);
+            if (currentToken != null)
+            {
+                currentToken.ModifiedDate = DateTime.UtcNow;
+                currentToken.ModifiedBy = user.Email;
+                currentToken.Token = refreshToken.Token;
+                currentToken.TokenExpires = refreshToken.Expires;
+            }
+            else
+            {
+                currentToken = new SYS_UserRefreshToken
+                {
+                    UserID = user.ID,
+                    Token = refreshToken.Token,
+                    DeviceInfo = deviceInfo,
+                    TokenExpires = refreshToken.Expires,
+                    CreatedDate = DateTime.UtcNow,
+                    CreatedBy = user.Email,
+                };
+                _dbContext.SYS_UserRefreshToken.Add(currentToken);
+            }
+
+            // Trong 1 thời điểm chỉ có 1 refresh token của 1 user trên 1 thiết bị
+            foreach (var token in userRefreshTokens.Where(c => c.DeviceInfo != deviceInfo))
+            {
+                token.Token = string.Empty;
+                token.TokenExpires = null;
+            }
+
+            await _dbContext.SaveChangesAsync();
         }
     }
 }

@@ -28,6 +28,17 @@ namespace AuthenNet8.Entities
         public DateTime? TokenExpires { get; set; }
 
         [Required]
+        public DateTime CreatedDate { get; set; }
+
+        [Required]
+        [MaxLength(100)]
+        public string CreatedBy { get; set; } = string.Empty;
+
+        public DateTime? ModifiedDate { get; set; }
+
+        public string? ModifiedBy { get; set; }
+
+        [Required]
         [MaxLength(100)]
         public string FirstName { get; set; } = string.Empty;
 
@@ -35,6 +46,6 @@ namespace AuthenNet8.Entities
         [MaxLength(100)]
         public string LastName { get; set; } = string.Empty;
 
-        public virtual ICollection<SYS_UserRefreshToken> UserRefreshToken { get; set; } = new List<SYS_UserRefreshToken>();
+        public virtual ICollection<SYS_UserRefreshToken> UserRefreshToken { get; set; }
     }
 }

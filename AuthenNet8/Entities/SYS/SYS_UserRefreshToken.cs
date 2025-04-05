@@ -9,15 +9,28 @@ namespace AuthenNet8.Entities
         [Key]
         public int ID { get; set; }
 
-        public int? UserID { get; set; }
+        [Required]
+        public int UserID { get; set; }
+
+        public string Token { get; set; } = string.Empty;
+
+        public DateTime? TokenExpires { get; set; }
 
         [Required]
-        public required string Token { get; set; }
+        public required string DeviceInfo { get; set; }
 
         [Required]
-        public required string DeviceInfo { get; set; } // Lưu thông tin trình duyệt
+        public DateTime CreatedDate { get; set; }
+
+        [Required]
+        [MaxLength(100)]
+        public string CreatedBy { get; set; } = string.Empty;
+
+        public DateTime? ModifiedDate { get; set; }
+
+        public string? ModifiedBy { get; set; }
 
         [ForeignKey("UserID")]
-        public required SYS_User User { get; set; }
+        public SYS_User? User { get; set; }
     }
 }

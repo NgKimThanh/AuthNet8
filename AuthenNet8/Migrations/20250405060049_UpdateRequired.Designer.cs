@@ -3,6 +3,7 @@ using System;
 using AuthenNet8.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AuthenNet8.Migrations
 {
     [DbContext(typeof(DBContext))]
-    partial class DBContextModelSnapshot : ModelSnapshot
+    [Migration("20250405060049_UpdateRequired")]
+    partial class UpdateRequired
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -117,7 +120,7 @@ namespace AuthenNet8.Migrations
                     b.Property<DateTime?>("TokenExpires")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("UserID")
+                    b.Property<int?>("UserID")
                         .HasColumnType("integer");
 
                     b.HasKey("ID");
@@ -131,9 +134,7 @@ namespace AuthenNet8.Migrations
                 {
                     b.HasOne("AuthenNet8.Entities.SYS_User", "User")
                         .WithMany("UserRefreshToken")
-                        .HasForeignKey("UserID")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .HasForeignKey("UserID");
 
                     b.Navigation("User");
                 });
