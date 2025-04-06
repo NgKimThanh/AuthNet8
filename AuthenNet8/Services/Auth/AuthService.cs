@@ -1,7 +1,13 @@
 ﻿using AuthenNet8.DTO.Auth;
 using AuthenNet8.DTO.SYS;
 using AuthenNet8.Entities;
+using AuthenNet8.Entities.SYS;
+using AuthenNet8.Repositories.Users;
+using AuthenNet8.Services.Email;
+using AuthenNet8.Services.Token;
 using Azure.Core;
+using DemoWebApiDotNet6.Helper;
+using Microsoft.AspNetCore.Components.Routing;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -13,202 +19,20 @@ namespace AuthenNet8.Services.Auth
 {
     public class AuthService : IAuthService
     {
-        private readonly DBContext _dbContext;
-        private readonly IConfiguration _configuration;
+        private readonly IUserRepository _userRepo;
+        private readonly IEmailService _emailService;
+        private readonly TokenService _tokenService;
         private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public AuthService(DBContext dbContext, 
-            IConfiguration configuration,
+        public AuthService(IUserRepository userRepo,
+            IEmailService emailService,
+            TokenService tokenService,
             IHttpContextAccessor httpContextAccessor)
         {
-            _dbContext = dbContext;
-            _configuration = configuration;
+            _userRepo = userRepo;
+            _emailService = emailService;
+            _tokenService = tokenService;
             _httpContextAccessor = httpContextAccessor;
-        }
-
-        #region Đăng ký
-        [HttpPost("register")]
-        public async Task<SYSUser> Auth_Register(RegisterRequest request)
-        {
-            var result = new SYSUser();
-
-            CreatePasswordHash(request.Password, out byte[] passwordHash, out byte[] passwordSalt);
-
-            var user = await _dbContext.SYS_User.FirstOrDefaultAsync(c => c.Email == request.Email);
-            if (user != null)
-            {
-                throw new Exception("Email already exists");
-            }
-            else
-            {
-                user = new SYS_User
-                {
-                    Email = request.Email,
-                    Password = request.Password,
-                    FirstName = request.FirstName,
-                    LastName = request.LastName,
-                    CreatedDate = DateTime.UtcNow,
-                    CreatedBy = request.Email,
-                    PasswordHash = Convert.ToBase64String(passwordHash),
-                    PasswordSalt = Convert.ToBase64String(passwordSalt)
-                };
-                _dbContext.SYS_User?.Add(user);
-                await _dbContext.SaveChangesAsync();
-            }
-
-            result.Email = user.Email;
-            return result;
-        }
-
-        private void CreatePasswordHash(string password, out byte[] passwordHash, out byte[] passwordSalt)
-        {
-            using (var hmac = new HMACSHA512())
-            {
-                passwordSalt = hmac.Key;
-                passwordHash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password));
-            }
-        }
-        #endregion Đăng ký
-
-        #region Đăng nhập
-        public async Task<string> Auth_Login(LoginRequest rqUser)
-        {
-            string token = "";
-            #region Verify user
-            // Lấy thông tin user
-            var user = await _dbContext.SYS_User.FirstOrDefaultAsync(c => c.Email == rqUser.Email);
-            if (user == null || user.Email != rqUser.Email)
-                throw new Exception("User not found.");
-            if (string.IsNullOrEmpty(user.PasswordHash))
-                throw new Exception("PasswordHash error.");
-            if (string.IsNullOrEmpty(user.PasswordSalt))
-                throw new Exception("PasswordSalt error.");
-
-            // Lấy passwordHash & passwordSalt từ user
-            var passwordHash = Convert.FromBase64String(user.PasswordHash);
-            var passwordSalt = Convert.FromBase64String(user.PasswordSalt);
-
-            // Verify Password từ passwordHash & passwordSalt
-            if (!VerifyPasswordHash(rqUser.Password, passwordHash, passwordSalt))
-                throw new Exception("Wrong password.");
-            #endregion
-
-            #region Tạo token
-            // Tạo token
-            token = CreateToken(user);
-            // Tạo refresh token
-            var refreshToken = GenerateRefreshToken();
-            SetRefreshToken(refreshToken, user.ID);
-
-            // Cập nhật refresh token theo user
-            await UpdateUserRefreshToken(user, refreshToken);
-            #endregion
-
-            return token;
-        }
-
-        private bool VerifyPasswordHash(string password, byte[] passwordHash, byte[] passwordSalt)
-        {
-            using (var hmac = new HMACSHA512(passwordSalt))
-            {
-                var computedHash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password));
-                return computedHash.SequenceEqual(passwordHash);
-            }
-        }
-        #endregion Đăng nhập
-
-        #region Refresh token
-        public async Task<string> Auth_RefreshToken()
-        {
-            // Cookie refresh token
-            var cookie = GetRefreshToken();
-
-            // Lấy user từ HpptOnly Cookie userID
-            var user = await _dbContext.SYS_User.FirstOrDefaultAsync(c => c.ID == cookie.UserID);
-            if (user == null)
-                throw new Exception("Invalid user.");
-            var userRefreshToken = await _dbContext.SYS_UserRefreshToken
-                .FirstOrDefaultAsync(c => c.UserID == user.ID && c.Token == cookie.RefeshToken);
-            if (userRefreshToken == null)
-                throw new Exception("Invalid Refresh Token.");
-
-            if (userRefreshToken.TokenExpires < DateTime.UtcNow)
-                throw new Exception("Refresh Token expired.");
-
-            string newToken = CreateToken(user);
-            var newRefreshToken = GenerateRefreshToken();
-            SetRefreshToken(newRefreshToken, user.ID);
-
-            userRefreshToken.Token = newRefreshToken.Token;
-            userRefreshToken.TokenExpires = newRefreshToken.Expires;
-            await _dbContext.SaveChangesAsync();
-
-            return newToken;
-        }
-        #endregion Refresh token
-
-        #region Đăng xuất
-        public async Task Auth_Logout()
-        {
-            // Cookie refresh token
-            var cookie = GetRefreshToken();
-
-            if (string.IsNullOrEmpty(cookie.RefeshToken))
-                throw new Exception("No Refresh Token found.");
-
-            var userRefreshTokens = await _dbContext.SYS_UserRefreshToken.Where(c => c.UserID == cookie.UserID).ToListAsync();
-            foreach (var userRefreshToken in userRefreshTokens)
-            {
-                userRefreshToken.Token = string.Empty;
-                userRefreshToken.TokenExpires = null;
-            }
-            await _dbContext.SaveChangesAsync();
-
-            // Xóa cookie refresh token
-            _httpContextAccessor.HttpContext!.Response.Cookies.Delete("refreshToken");
-            _httpContextAccessor.HttpContext!.Response.Cookies.Delete("userID");
-        }
-        #endregion Đăng xuất
-
-        private string CreateToken(SYS_User user)
-        {
-            // Tạo ra danh sách các quyền có trong 1 token
-            List<Claim> claims = new List<Claim>
-            {
-                new Claim(ClaimTypes.Email, user.Email),
-                //new Claim(ClaimTypes.Role, user.Role)
-            };
-
-            // Tạo 1 key
-            var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(
-                _configuration.GetSection("AppSettings:SecretKey").Value));
-
-            // Ký mã jwt bằng thuật toán SecurityAlgorithms.HmacSha512Signature
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha512Signature);
-
-            // Tạo mã jwt
-            var token = new JwtSecurityToken(
-                claims: claims, // Danh sách quyền
-                expires: DateTime.Now.AddDays(1), // Thời hạn
-                signingCredentials: creds // Ký mã jwt
-                );
-
-            // Tạo chuỗi jwt
-            var jwt = new JwtSecurityTokenHandler().WriteToken(token);
-
-            return jwt;
-        }
-
-        private RefreshToken GenerateRefreshToken()
-        {
-            var refreshToken = new RefreshToken
-            {
-                Token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)),
-                Expires = DateTime.Now.AddDays(7).ToUniversalTime(),
-                Created = DateTime.Now.ToUniversalTime()
-            };
-
-            return refreshToken;
         }
 
         private void SetRefreshToken(RefreshToken refreshToken, int userID)
@@ -255,7 +79,7 @@ namespace AuthenNet8.Services.Auth
             var deviceInfo = _httpContextAccessor.HttpContext!.Request.Headers["User-Agent"].ToString();
 
             // Xóa các refresh token khác của user
-            var userRefreshTokens = await _dbContext.SYS_UserRefreshToken.Where(c => c.UserID == user.ID).ToListAsync();
+            var userRefreshTokens = await _userRepo.GetUserRefreshTokensAsync(user.ID);
 
             // refesh token của user trên thiết bị hiện tại
             var currentToken = userRefreshTokens.FirstOrDefault(c => c.DeviceInfo == deviceInfo);
@@ -277,7 +101,7 @@ namespace AuthenNet8.Services.Auth
                     CreatedDate = DateTime.UtcNow,
                     CreatedBy = user.Email,
                 };
-                _dbContext.SYS_UserRefreshToken.Add(currentToken);
+                _userRepo.AddUserRefreshToken(currentToken);
             }
 
             // Trong 1 thời điểm chỉ có 1 refresh token của 1 user trên 1 thiết bị
@@ -287,7 +111,170 @@ namespace AuthenNet8.Services.Auth
                 token.TokenExpires = null;
             }
 
-            await _dbContext.SaveChangesAsync();
+            await _userRepo.SaveChangesAsync();
         }
+
+        #region Đăng ký
+        public async Task<SYSUser> Auth_Register(RegisterRequest request)
+        {
+            var result = new SYSUser();
+
+            CreatePasswordHash(request.Password, out byte[] passwordHash, out byte[] passwordSalt);
+
+            var user = await _userRepo.GetByEmailAsync(request.Email);
+            if (user != null)
+            {
+                throw new Exception("Email already exists");
+            }
+            else
+            {
+                _userRepo.AddUser(new SYS_User
+                {
+                    Email = request.Email,
+                    FirstName = request.FirstName,
+                    LastName = request.LastName,
+                    CreatedDate = DateTime.UtcNow,
+                    CreatedBy = request.Email,
+                    PasswordHash = Convert.ToBase64String(passwordHash),
+                    PasswordSalt = Convert.ToBase64String(passwordSalt)
+                });
+                await _userRepo.SaveChangesAsync();
+            }
+
+            result.Email = request.Email;
+            return result;
+        }
+
+        private void CreatePasswordHash(string password, out byte[] passwordHash, out byte[] passwordSalt)
+        {
+            using (var hmac = new HMACSHA512())
+            {
+                passwordSalt = hmac.Key;
+                passwordHash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password));
+            }
+        }
+        #endregion Đăng ký
+
+        #region Đăng nhập
+        public async Task<string> Auth_Login(LoginRequest rqUser)
+        {
+            var user = await _userRepo.GetByEmailAsync(rqUser.Email)
+                ?? throw new Exception("User not found.");
+
+            var hash = Convert.FromBase64String(user.PasswordHash);
+            var salt = Convert.FromBase64String(user.PasswordSalt);
+
+            if (!VerifyPasswordHash(rqUser.Password, hash, salt))
+                throw new Exception("Wrong password.");
+
+            var jwt = _tokenService.CreateToken(user);
+            var refreshToken = _tokenService.GenerateRefreshToken();
+
+            SetRefreshToken(refreshToken, user.ID);
+            await UpdateUserRefreshToken(user, refreshToken);
+            return jwt;
+        }
+
+        private bool VerifyPasswordHash(string password, byte[] passwordHash, byte[] passwordSalt)
+        {
+            using (var hmac = new HMACSHA512(passwordSalt))
+            {
+                var computedHash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password));
+                return computedHash.SequenceEqual(passwordHash);
+            }
+        }
+        #endregion Đăng nhập
+
+        #region Refresh token
+        public async Task<string> Auth_RefreshToken()
+        {
+            // Cookie refresh token
+            var cookie = GetRefreshToken();
+
+            // Lấy user từ HpptOnly Cookie userID
+            var user = await _userRepo.GetByIdAsync(cookie.UserID)
+                ?? throw new Exception("Invalid user.");
+            var userRefreshToken = await _userRepo.GetUserRefreshTokenAsync(cookie.UserID, cookie.RefeshToken);
+            if (userRefreshToken == null)
+                throw new Exception("Invalid Refresh Token.");
+
+            if (userRefreshToken.TokenExpires < DateTime.UtcNow)
+                throw new Exception("Refresh Token expired.");
+
+            string newToken = _tokenService.CreateToken(user);
+            var newRefreshToken = _tokenService.GenerateRefreshToken();
+            SetRefreshToken(newRefreshToken, user.ID);
+
+            userRefreshToken.Token = newRefreshToken.Token;
+            userRefreshToken.TokenExpires = newRefreshToken.Expires;
+            await _userRepo.SaveChangesAsync();
+
+            return newToken;
+        }
+        #endregion Refresh token
+
+        #region Đăng xuất
+        public async Task Auth_Logout()
+        {
+            // Cookie refresh token
+            var cookie = GetRefreshToken();
+
+            if (string.IsNullOrEmpty(cookie.RefeshToken))
+                throw new Exception("No Refresh Token found.");
+
+            var userRefreshTokens = await _userRepo.GetUserRefreshTokensAsync(cookie.UserID);
+            foreach (var userRefreshToken in userRefreshTokens)
+            {
+                userRefreshToken.Token = string.Empty;
+                userRefreshToken.TokenExpires = null;
+            }
+            await _userRepo.SaveChangesAsync();
+
+            // Xóa cookie refresh token
+            _httpContextAccessor.HttpContext!.Response.Cookies.Delete("refreshToken");
+            _httpContextAccessor.HttpContext!.Response.Cookies.Delete("userID");
+        }
+        #endregion Đăng xuất
+
+        #region Quên mật khẩu
+        public async Task Auth_ForgotPassword(string email)
+        {
+            var user = await _userRepo.GetByEmailAsync(email)
+                ?? throw new Exception("User not found.");
+
+            var resetToken = Guid.NewGuid().ToString("N");
+            var resetRecord = new SYS_UserPasswordReset
+            {
+                UserID = user.ID,
+                ResetToken = resetToken,
+                TokenExpires = DateTime.UtcNow.AddMinutes(30),
+                CreatedDate = DateTime.UtcNow
+            };
+
+            _userRepo.AddUserPasswordReset(resetRecord);
+            await _userRepo.SaveChangesAsync();
+
+            var resetLink = $"https://yourapp.com/reset-password?token={resetToken}";
+            await _emailService.Send(email, "Reset your password", $"Click the link to reset: {resetLink}");
+        }
+
+        public async Task Auth_ResetPassword(string token, string newPassword)
+        {
+            var resetRecord = await _userRepo.GetValidResetTokenAsync(token)
+                ?? throw new Exception("Invalid token");
+            if (resetRecord.TokenExpires < DateTime.UtcNow)
+                throw new Exception("Token expired");
+
+            var user = await _userRepo.GetByIdAsync(resetRecord.UserID)
+                ?? throw new Exception("User not found");
+
+            CreatePasswordHash(newPassword, out byte[] hash, out byte[] salt);
+            user.PasswordHash = Convert.ToBase64String(hash);
+            user.PasswordSalt = Convert.ToBase64String(salt);
+
+            await _userRepo.RemoveUserPasswordReset(resetRecord);
+            await _userRepo.SaveChangesAsync();
+        }
+        #endregion Quên mật khẩu
     }
 }

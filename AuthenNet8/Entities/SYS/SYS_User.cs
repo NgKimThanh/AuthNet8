@@ -13,19 +13,9 @@ namespace AuthenNet8.Entities
         [MaxLength(50)]
         public string Email { get; set; } = string.Empty;
 
-        [Required]
-        [MaxLength(250)]
-        public string Password { get; set; } = string.Empty;
-
         public string? PasswordHash { get; set; }
 
         public string? PasswordSalt { get; set; }
-
-        public string? RefreshToken { get; set; }
-
-        public DateTime? TokenCreated { get; set; }
-
-        public DateTime? TokenExpires { get; set; }
 
         [Required]
         public DateTime CreatedDate { get; set; }

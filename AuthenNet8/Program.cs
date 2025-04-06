@@ -1,5 +1,8 @@
 ﻿using AuthenNet8.Entities;
+using AuthenNet8.Repositories.Users;
 using AuthenNet8.Services.Auth;
+using AuthenNet8.Services.Email;
+using AuthenNet8.Services.Token;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -22,6 +25,9 @@ builder.Services.AddAutoMapper(typeof(Program));
 // Life cycle DI: AddSingleton(), AddTransient(), AddScoped()
 //builder.Services.AddScoped<IGroupOfProductService, GroupOfProductService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<TokenService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 builder.Services.AddHttpContextAccessor();
 

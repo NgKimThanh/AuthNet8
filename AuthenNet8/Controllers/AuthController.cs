@@ -49,5 +49,23 @@ namespace AuthenNet8.Controllers
             return Ok();
         }
         #endregion Đăng xuất
+
+        #region Quên mật khẩu
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> Auth_ForgotPassword([FromBody] PasswordResetRequest request)
+        {
+            // Gửi link khôi phục pass đến mail user
+            await _authService.Auth_ForgotPassword(request.Email);
+            return Ok();
+        }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> Auth_ResetPassword([FromBody] PasswordResetRequest request)
+        {
+            // Gửi link khôi phục pass đến mail user
+            await _authService.Auth_ResetPassword(request.Token, request.NewPassword);
+            return Ok();
+        }
+        #endregion Quên mật khẩu
     }
 }
