@@ -62,7 +62,6 @@ namespace AuthenNet8.Controllers
         [HttpPost("reset-password")]
         public async Task<IActionResult> Auth_ResetPassword([FromBody] PasswordResetRequest request)
         {
-            // Gửi link khôi phục pass đến mail user
             await _authService.Auth_ResetPassword(request.Token, request.NewPassword);
             return Ok();
         }
