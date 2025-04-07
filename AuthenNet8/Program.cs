@@ -1,4 +1,5 @@
 ﻿using AuthenNet8.Entities;
+using AuthenNet8.Middleware;
 using AuthenNet8.Repositories.Users;
 using AuthenNet8.Services.Auth;
 using AuthenNet8.Services.Email;
@@ -75,8 +76,16 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+#region Middleware
+// Anti XSS
+app.UseMiddleware<AntiXssMiddleware>();
+// Exception Handler
+app.UseMiddleware<ExceptionHandler>();
+#endregion Middleware
+
 app.UseAuthorization();
 
+// Ánh xạ các route vào Controller
 app.MapControllers();
 
 app.Run();

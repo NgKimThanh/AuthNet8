@@ -2,6 +2,7 @@
 using AuthenNet8.DTO.SYS;
 using AuthenNet8.Entities;
 using AuthenNet8.Entities.SYS;
+using AuthenNet8.Helper;
 using AuthenNet8.Repositories.Users;
 using AuthenNet8.Services.Email;
 using AuthenNet8.Services.Token;
@@ -63,7 +64,7 @@ namespace AuthenNet8.Services.Auth
             }
             catch
             {
-                throw new Exception("No Refresh Token found.");
+                throw HelperFault.BusinessFault("", "", "No Refresh Token found.");
             }
 
             return new RefreshToken
@@ -124,7 +125,7 @@ namespace AuthenNet8.Services.Auth
             var user = await _userRepo.GetByEmailAsync(request.Email);
             if (user != null)
             {
-                throw new Exception("Email already exists");
+                throw HelperFault.BusinessFault("", "", "Email already exists");
             }
             else
             {
@@ -159,13 +160,13 @@ namespace AuthenNet8.Services.Auth
         public async Task<string> Auth_Login(LoginRequest rqUser)
         {
             var user = await _userRepo.GetByEmailAsync(rqUser.Email)
-                ?? throw new Exception("User not found.");
+                ?? throw HelperFault.BusinessFault("", "", "User not found");
 
             var hash = Convert.FromBase64String(user.PasswordHash);
             var salt = Convert.FromBase64String(user.PasswordSalt);
 
             if (!VerifyPasswordHash(rqUser.Password, hash, salt))
-                throw new Exception("Wrong password.");
+                throw HelperFault.BusinessFault("", "", "Wrong password.");
 
             var jwt = _tokenService.CreateToken(user);
             var refreshToken = _tokenService.GenerateRefreshToken();
@@ -193,13 +194,13 @@ namespace AuthenNet8.Services.Auth
 
             // Lấy user từ HpptOnly Cookie userID
             var user = await _userRepo.GetByIdAsync(cookie.UserID)
-                ?? throw new Exception("Invalid user.");
+                ?? throw HelperFault.BusinessFault("", "", "Invalid user.");
             var userRefreshToken = await _userRepo.GetUserRefreshTokenAsync(cookie.UserID, cookie.RefeshToken);
             if (userRefreshToken == null)
-                throw new Exception("Invalid Refresh Token.");
+                throw HelperFault.BusinessFault("", "", "Invalid Refresh Token.");
 
             if (userRefreshToken.TokenExpires < DateTime.UtcNow)
-                throw new Exception("Refresh Token expired.");
+                throw HelperFault.BusinessFault("", "", "Refresh Token expired.");
 
             string newToken = _tokenService.CreateToken(user);
             var newRefreshToken = _tokenService.GenerateRefreshToken();
@@ -220,7 +221,7 @@ namespace AuthenNet8.Services.Auth
             var cookie = GetRefreshToken();
 
             if (string.IsNullOrEmpty(cookie.RefeshToken))
-                throw new Exception("No Refresh Token found.");
+                throw HelperFault.BusinessFault("", "", "No Refresh Token found.");
 
             var userRefreshTokens = await _userRepo.GetUserRefreshTokensAsync(cookie.UserID);
             foreach (var userRefreshToken in userRefreshTokens)
@@ -240,7 +241,7 @@ namespace AuthenNet8.Services.Auth
         public async Task Auth_ForgotPassword(string email)
         {
             var user = await _userRepo.GetByEmailAsync(email)
-                ?? throw new Exception("User not found.");
+                ?? throw HelperFault.BusinessFault("", "", "User not found.");
 
             var resetToken = Guid.NewGuid().ToString("N");
             var resetRecord = new SYS_UserPasswordReset
@@ -261,12 +262,12 @@ namespace AuthenNet8.Services.Auth
         public async Task Auth_ResetPassword(string token, string newPassword)
         {
             var resetRecord = await _userRepo.GetValidResetTokenAsync(token)
-                ?? throw new Exception("Invalid token");
+                ?? throw HelperFault.BusinessFault("", "", "Invalid token");
             if (resetRecord.TokenExpires < DateTime.UtcNow)
-                throw new Exception("Token expired");
+                throw HelperFault.BusinessFault("", "", "Token expired");
 
             var user = await _userRepo.GetByIdAsync(resetRecord.UserID)
-                ?? throw new Exception("User not found");
+                ?? throw HelperFault.BusinessFault("", "", "User not found");
 
             CreatePasswordHash(newPassword, out byte[] hash, out byte[] salt);
             user.PasswordHash = Convert.ToBase64String(hash);
